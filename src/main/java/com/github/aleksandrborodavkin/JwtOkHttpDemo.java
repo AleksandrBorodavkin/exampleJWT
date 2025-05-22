@@ -13,8 +13,8 @@ import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.UnsupportedJwtException;
 import okhttp3.*;
+import okhttp3.logging.HttpLoggingInterceptor;
 
-import java.io.IOException;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.spec.X509EncodedKeySpec;
@@ -29,59 +29,76 @@ record Contact(long id, String username) {
 public class JwtOkHttpDemo {
 
     // --- ИНСТРУМЕНТЫ ---
-    private final OkHttpClient httpClient = new OkHttpClient();
+    private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT);
+
+    public JwtOkHttpDemo() {
+        // Настраиваем логгер OkHttp для красивого вывода
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor(message -> {
+            // Убираем технические префиксы (дата, уровень INFO)
+            if (message.startsWith("-->")) {
+                String output = String.format("""
+                        \u001B[32m%s   -->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->-->--> \u001B[0m
+                        """, message
+                );
+                System.out.println(output);
+            } else if (message.startsWith("<--")) {
+                String output = String.format(""" 
+                        \u001B[36m %s   <--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<--<-- \u001B[0m
+                        """, message
+                );
+                System.out.println(output);
+            } else {
+                System.out.println("    " + message);
+            }
+        });
+        loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
+
+        this.httpClient = new OkHttpClient.Builder()
+                .addInterceptor(loggingInterceptor)
+                .build();
+    }
 
     // --- СОСТОЯНИЕ АУТЕНТИФИКАЦИИ ---
     private String currentAccessToken;
     private String currentRefreshToken;
-    private JwtParser jwtParser; // "Проверяльщик Билетов"
+    private JwtParser jwtParser;
 
-    // --- АДРЕСА НА СЕРВЕРЕ (эндпоинты API) ---
-    private String serverBaseUrl = "http://localhost:8080"; // Можно изменить
+    // --- АДРЕСА НА СЕРВЕРЕ ---
+    private String serverBaseUrl = "https://faruegonar.beget.app/";
     private static final String PUB_KEY_PATH = "/public-key";
     private static final String LOGIN_PATH = "/auth/login";
     private static final String REFRESH_PATH = "/auth/refresh";
     private static final String CONTACTS_PATH = "/contacts";
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
 
-    // --- ОСНОВНОЙ МЕТОД ДЕМОНСТРАЦИИ ---
     public static void main(String[] args) {
         JwtOkHttpDemo demo = new JwtOkHttpDemo();
-
-        // Если ваш сервер на другом URL, измените его здесь:
-        // demo.setServerBaseUrl("http://your-server-url:port");
 
         System.out.println("--- Демонстрация работы с JWT через OkHttp ---");
         System.out.println("Используется сервер: " + demo.serverBaseUrl);
 
         try {
-            // 1. Загрузить публичный ключ
             if (!demo.loadPublicKeyAction()) {
                 System.err.println("\nОШИБКА: Не удалось загрузить публичный ключ. Демонстрация прервана.");
                 return;
             }
 
-            // 2. Войти (используйте свои учетные данные)
-            if (!demo.loginAction("user@example.com", "password123")) { // ЗАМЕНИТЕ УЧЕТНЫЕ ДАННЫЕ
+            if (!demo.loginAction("user@example.com", "password123")) {
                 System.err.println("\nОШИБКА: Не удалось войти. Демонстрация прервана.");
                 return;
             }
 
-            // 3. Получить контакты с текущим Access Token
             System.out.println("\n--- Попытка получить контакты #1 (после логина) ---");
             demo.getContactsAction();
 
-            // 4. Обновить Access Token используя Refresh Token
             if (!demo.refreshAction()) {
-                System.err.println("\nОШИБКА: Не удалось обновить токен. Попытка получить контакты может не удасться.");
+                System.err.println("\nОШИБКА: Не удалось обновить токен.");
             }
 
-            // 5. Получить контакты с (возможно) новым Access Token
             System.out.println("\n--- Попытка получить контакты #2 (после обновления токена) ---");
             demo.getContactsAction();
 
-            // 6. Демонстрация проверки невалидного (испорченного) токена
             System.out.println("\n--- Демонстрация проверки испорченного токена ---");
             if (demo.currentAccessToken != null && demo.jwtParser != null) {
                 String tamperedToken = demo.currentAccessToken.substring(0, demo.currentAccessToken.length() - 5) + "XXXXX";
@@ -90,8 +107,7 @@ public class JwtOkHttpDemo {
                 System.out.println("Нет Access Token или JwtParser для демонстрации испорченного токена.");
             }
 
-
-        } catch (Exception e) { // Общий перехватчик для непредвиденных ошибок в main
+        } catch (Exception e) {
             System.err.println("\nКРИТИЧЕСКАЯ ОШИБКА в ходе демонстрации: " + e.getMessage());
             e.printStackTrace();
         }
@@ -115,14 +131,11 @@ public class JwtOkHttpDemo {
         jwtParser = null;
 
         Request request = new Request.Builder().url(buildFullUrl(PUB_KEY_PATH)).get().build();
-        System.out.println("   Запрос на: " + request.url());
 
         try (Response response = httpClient.newCall(request).execute()) {
+            Thread.sleep(5000);
             ResponseBody responseBody = response.body();
-            String responseBodyString = null;
-            if (responseBody != null) {
-                responseBodyString = responseBody.string(); // Читаем тело ОДИН РАЗ
-            }
+            String responseBodyString = responseBody != null ? responseBody.string() : null;
 
             if (!response.isSuccessful()) {
                 System.err.println("   ОШИБКА СЕРВЕРА при загрузке ключа: " + response.code() + " " + response.message());
@@ -134,23 +147,22 @@ public class JwtOkHttpDemo {
             }
 
             if (responseBodyString == null || responseBodyString.isEmpty()) {
-                System.err.println("   ОШИБКА: Тело ответа от сервера пустое при загрузке публичного ключа.");
+                System.err.println("   ОШИБКА: Тело ответа от сервера пустое.");
                 return false;
             }
 
-            String publicKeyPem = responseBodyString;
-            System.out.println("   Получен ключ (сырой PEM):\n" + publicKeyPem.substring(0, Math.min(publicKeyPem.length(), 100)) + "...");
+            System.out.println("   Получен ключ (первые 100 символов):\n" + responseBodyString.substring(0, Math.min(responseBodyString.length(), 100)) + "...");
 
-            String formattedPem = publicKeyPem.replace("-----BEGIN PUBLIC KEY-----", "")
+            String formattedPem = responseBodyString.replace("-----BEGIN PUBLIC KEY-----", "")
                     .replace("-----END PUBLIC KEY-----", "").replaceAll("\\s", "");
             byte[] decodedKey = Base64.getDecoder().decode(formattedPem);
 
             PublicKey publicKey = KeyFactory.getInstance("RSA").generatePublic(new X509EncodedKeySpec(decodedKey));
-            jwtParser = Jwts.parserBuilder().setSigningKey(publicKey).build();
+            jwtParser = Jwts.parser().verifyWith(publicKey).build();
 
-            System.out.println("   Публичный ключ успешно загружен. JwtParser создан.");
+            System.out.println("   Публичный ключ успешно загружен.");
             return true;
-        } catch (Exception e) { // Перехватываем более общие исключения здесь
+        } catch (Exception e) {
             System.err.println("   КРИТИЧЕСКАЯ ОШИБКА при обработке публичного ключа: " + e.getClass().getSimpleName() + " - " + e.getMessage());
             e.printStackTrace();
             return false;
@@ -160,7 +172,7 @@ public class JwtOkHttpDemo {
     // --- 2. ВХОД В СИСТЕМУ ---
     public boolean loginAction(String email, String password) {
         if (jwtParser == null) {
-            System.err.println("   ОШИБКА: Публичный ключ не загружен. Выполните loadPublicKeyAction() сначала.");
+            System.err.println("   ОШИБКА: Публичный ключ не загружен.");
             return false;
         }
         System.out.println("\n2. Вход в систему...");
@@ -171,14 +183,11 @@ public class JwtOkHttpDemo {
         RequestBody body = RequestBody.create(jsonPayload, JSON_MEDIA);
 
         Request request = new Request.Builder().url(buildFullUrl(LOGIN_PATH)).post(body).build();
-        System.out.println("   Запрос на: " + request.url() + " с данными: " + jsonPayload);
 
         try (Response response = httpClient.newCall(request).execute()) {
+            Thread.sleep(5000);
             ResponseBody responseBody = response.body();
-            String responseBodyString = null;
-            if (responseBody != null) {
-                responseBodyString = responseBody.string(); // Читаем тело ОДИН РАЗ
-            }
+            String responseBodyString = responseBody != null ? responseBody.string() : null;
 
             if (!response.isSuccessful()) {
                 System.err.println("   ОШИБКА СЕРВЕРА при входе: " + response.code() + " " + response.message());
@@ -190,7 +199,7 @@ public class JwtOkHttpDemo {
             }
 
             if (responseBodyString == null || responseBodyString.isEmpty()) {
-                System.err.println("   ОШИБКА: Тело ответа от сервера пустое при успешном входе (ожидался JSON с токенами).");
+                System.err.println("   ОШИБКА: Тело ответа от сервера пустое.");
                 return false;
             }
 
@@ -200,16 +209,17 @@ public class JwtOkHttpDemo {
             currentRefreshToken = tokens.get("refreshToken");
 
             if (currentAccessToken == null) {
-                System.err.println("   ОШИБКА: Сервер не вернул accessToken. Тело ответа: \n" + tryPrettyPrintJsonElseRaw(responseBodyString, objectMapper));
+                System.err.println("   ОШИБКА: Сервер не вернул accessToken.");
                 return false;
             }
-            System.out.println("   Вход успешен. Получены токены.");
+
+            System.out.println("   Вход успешен.");
             verifyAndDisplayTokenStatic(currentAccessToken, "Access Token (после логина)", jwtParser, objectMapper);
+
             if (currentRefreshToken != null) {
                 System.out.println("   Получен Refresh Token: " + currentRefreshToken.substring(0, Math.min(currentRefreshToken.length(), 20)) + "...");
-            } else {
-                System.out.println("   Refresh Token не был получен от сервера.");
             }
+
             return true;
         } catch (Exception e) {
             System.err.println("   КРИТИЧЕСКАЯ ОШИБКА при входе: " + e.getClass().getSimpleName() + " - " + e.getMessage());
@@ -220,6 +230,7 @@ public class JwtOkHttpDemo {
 
     // --- 3. ОБНОВЛЕНИЕ ТОКЕНА ---
     public boolean refreshAction() {
+
         if (jwtParser == null) {
             System.err.println("   ОШИБКА: Публичный ключ не загружен.");
             return false;
@@ -237,6 +248,7 @@ public class JwtOkHttpDemo {
         System.out.println("   Запрос на: " + request.url());
 
         try (Response response = httpClient.newCall(request).execute()) {
+            Thread.sleep(5000);
             ResponseBody responseBody = response.body();
             String responseBodyString = null;
             if (responseBody != null) {
@@ -297,6 +309,7 @@ public class JwtOkHttpDemo {
         System.out.println("   Запрос на: " + request.url() + " с Authorization header.");
 
         try (Response response = httpClient.newCall(request).execute()) {
+            Thread.sleep(5000);
             ResponseBody responseBody = response.body();
             String responseBodyString = null;
             if (responseBody != null) {
@@ -420,3 +433,5 @@ public class JwtOkHttpDemo {
         }
     }
 }
+
+
