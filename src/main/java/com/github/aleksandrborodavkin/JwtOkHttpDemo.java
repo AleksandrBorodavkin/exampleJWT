@@ -130,15 +130,12 @@ public class JwtOkHttpDemo {
 
         try (Response response = httpClient.newCall(request).execute()) {
             Thread.sleep(5000);
-            ResponseBody responseBody = response.body();
-            String responseBodyString = responseBody != null ? responseBody.string() : null;
+            String responseBodyString = response.body() != null ? response.body().string() : null;
 
             if (!response.isSuccessful()) {
+                String errorMessage = extractErrorMessage(responseBodyString);
                 System.err.println("   ОШИБКА СЕРВЕРА при загрузке ключа: " + response.code() + " " + response.message());
-                if (responseBodyString != null && !responseBodyString.isEmpty()) {
-                    System.err.println("   Тело ответа от сервера:");
-                    System.err.println(tryPrettyPrintJsonElseRaw(responseBodyString, objectMapper));
-                }
+                System.err.println("   Сообщение от сервера: " + errorMessage);
                 return false;
             }
 
@@ -175,22 +172,26 @@ public class JwtOkHttpDemo {
         currentAccessToken = null;
         currentRefreshToken = null;
 
-        String jsonPayload = String.format("{\"email\": \"%s\", \"password\": \"%s\"}", email, password);
+        String jsonPayload;
+        try {
+            Map<String, String> payload = Map.of("email", email, "password", password);
+            jsonPayload = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            System.err.println("   ОШИБКА: Не удалось сформировать JSON для входа: " + e.getMessage());
+            return false;
+        }
         RequestBody body = RequestBody.create(jsonPayload, JSON_MEDIA);
 
         Request request = new Request.Builder().url(buildFullUrl(LOGIN_PATH)).post(body).build();
 
         try (Response response = httpClient.newCall(request).execute()) {
             Thread.sleep(5000);
-            ResponseBody responseBody = response.body();
-            String responseBodyString = responseBody != null ? responseBody.string() : null;
+            String responseBodyString = response.body() != null ? response.body().string() : null;
 
             if (!response.isSuccessful()) {
+                String errorMessage = extractErrorMessage(responseBodyString);
                 System.err.println("   ОШИБКА СЕРВЕРА при входе: " + response.code() + " " + response.message());
-                if (responseBodyString != null && !responseBodyString.isEmpty()) {
-                    System.err.println("   Тело ответа от сервера:");
-                    System.err.println(tryPrettyPrintJsonElseRaw(responseBodyString, objectMapper));
-                }
+                System.err.println("   Сообщение от сервера: " + errorMessage);
                 return false;
             }
 
@@ -226,7 +227,6 @@ public class JwtOkHttpDemo {
 
     // --- 3. ОБНОВЛЕНИЕ ТОКЕНА ---
     public boolean refreshAction() {
-
         if (jwtParser == null) {
             System.err.println("   ОШИБКА: Публичный ключ не загружен.");
             return false;
@@ -237,7 +237,14 @@ public class JwtOkHttpDemo {
         }
         System.out.println("\n3. Обновление Access Token...");
 
-        String jsonPayload = String.format("{\"refreshToken\": \"%s\"}", currentRefreshToken);
+        String jsonPayload;
+        try {
+            Map<String, String> payload = Map.of("refreshToken", currentRefreshToken);
+            jsonPayload = objectMapper.writeValueAsString(payload);
+        } catch (JsonProcessingException e) {
+            System.err.println("   ОШИБКА: Не удалось сформировать JSON для обновления токена: " + e.getMessage());
+            return false;
+        }
         RequestBody body = RequestBody.create(jsonPayload, JSON_MEDIA);
 
         Request request = new Request.Builder().url(buildFullUrl(REFRESH_PATH)).post(body).build();
@@ -245,18 +252,12 @@ public class JwtOkHttpDemo {
 
         try (Response response = httpClient.newCall(request).execute()) {
             Thread.sleep(5000);
-            ResponseBody responseBody = response.body();
-            String responseBodyString = null;
-            if (responseBody != null) {
-                responseBodyString = responseBody.string(); // Читаем тело ОДИН РАЗ
-            }
+            String responseBodyString = response.body() != null ? response.body().string() : null;
 
             if (!response.isSuccessful()) {
+                String errorMessage = extractErrorMessage(responseBodyString);
                 System.err.println("   ОШИБКА СЕРВЕРА при обновлении токена: " + response.code() + " " + response.message());
-                if (responseBodyString != null && !responseBodyString.isEmpty()) {
-                    System.err.println("   Тело ответа от сервера:");
-                    System.err.println(tryPrettyPrintJsonElseRaw(responseBodyString, objectMapper));
-                }
+                System.err.println("   Сообщение от сервера: " + errorMessage);
                 return false;
             }
 
@@ -306,18 +307,12 @@ public class JwtOkHttpDemo {
 
         try (Response response = httpClient.newCall(request).execute()) {
             Thread.sleep(5000);
-            ResponseBody responseBody = response.body();
-            String responseBodyString = null;
-            if (responseBody != null) {
-                responseBodyString = responseBody.string(); // Читаем тело ОДИН РАЗ
-            }
+            String responseBodyString = response.body() != null ? response.body().string() : null;
 
             if (!response.isSuccessful()) {
+                String errorMessage = extractErrorMessage(responseBodyString);
                 System.err.println("   ОШИБКА СЕРВЕРА при получении контактов: " + response.code() + " " + response.message());
-                if (responseBodyString != null && !responseBodyString.isEmpty()) {
-                    System.err.println("   Тело ответа от сервера:");
-                    System.err.println(tryPrettyPrintJsonElseRaw(responseBodyString, objectMapper));
-                }
+                System.err.println("   Сообщение от сервера: " + errorMessage);
                 if (response.code() == 401 || response.code() == 403) {
                     System.err.println("   ДОСТУП ЗАПРЕЩЕН. Ваш Access Token мог истечь или недействителен. Попробуйте обновить его.");
                 }
@@ -344,8 +339,20 @@ public class JwtOkHttpDemo {
         }
     }
 
-
     // --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ---
+
+    private String extractErrorMessage(String responseBodyString) {
+        if (responseBodyString == null || responseBodyString.isEmpty()) {
+            return "Тело ответа пустое или отсутствует";
+        }
+        try {
+            Map<String, String> errorResponse = objectMapper.readValue(responseBodyString, new TypeReference<>() {
+            });
+            return errorResponse.getOrDefault("error", "Неизвестная ошибка от сервера");
+        } catch (JsonProcessingException e) {
+            return "Не удалось разобрать JSON ответа: " + responseBodyString;
+        }
+    }
 
     private static String tryPrettyPrintJsonElseRaw(String text, ObjectMapper mapper) {
         if (text == null || text.isEmpty()) {
@@ -430,5 +437,3 @@ public class JwtOkHttpDemo {
         }
     }
 }
-
-
