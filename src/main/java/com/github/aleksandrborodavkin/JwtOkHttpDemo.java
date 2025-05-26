@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 // Record для простого описания контакта
-record Contact(long id, String username) {
+record Contact(long id, String username, String firstName, String lastName, String photoUrl) {
 }
 
 public class JwtOkHttpDemo {
@@ -65,7 +65,7 @@ public class JwtOkHttpDemo {
     private JwtParser jwtParser;
 
     // --- АДРЕСА НА СЕРВЕРЕ ---
-    private String serverBaseUrl = "https://faruegonar.beget.app/";
+    private String serverBaseUrl = "https://java41.ru/";
     private static final String PUB_KEY_PATH = "/public-key";
     private static final String LOGIN_PATH = "/auth/login";
     private static final String REFRESH_PATH = "/auth/refresh";
@@ -111,10 +111,6 @@ public class JwtOkHttpDemo {
             System.err.println("\nКРИТИЧЕСКАЯ ОШИБКА в ходе демонстрации: " + e.getMessage());
             e.printStackTrace();
         }
-    }
-
-    public void setServerBaseUrl(String serverBaseUrl) {
-        this.serverBaseUrl = serverBaseUrl;
     }
 
     private String buildFullUrl(String path) {
@@ -339,7 +335,8 @@ public class JwtOkHttpDemo {
             if (contacts.isEmpty()) {
                 System.out.println("     (список пуст)");
             } else {
-                contacts.forEach(c -> System.out.printf("     ID: %d, Имя: %s%n", c.id(), c.username()));
+                contacts.forEach(c -> System.out.printf("     ID: %d, Username: %s, FirstName: %s, LastName: %s, PhotoUrl: %s%n",
+                        c.id(), c.username(), c.firstName(), c.lastName(), c.photoUrl() != null ? c.photoUrl() : "null"));
             }
         } catch (Exception e) {
             System.err.println("   КРИТИЧЕСКАЯ ОШИБКА при получении контактов: " + e.getClass().getSimpleName() + " - " + e.getMessage());
@@ -382,7 +379,7 @@ public class JwtOkHttpDemo {
         System.out.println("   RAW: " + token.substring(0, Math.min(token.length(), 60)) + "...");
         Jws<Claims> claimsJws;
         try {
-            claimsJws = jwtParser.parseClaimsJws(token);
+            claimsJws = jwtParser.parseSignedClaims(token);
             System.out.println("   ПОДПИСЬ ПРОВЕРЕНА! Токен аутентичен.");
         } catch (ExpiredJwtException eje) {
             System.out.println("   ПРОВЕРКА НЕ ПРОШЛА: Просроченный токен (ExpiredJwtException) - " + eje.getMessage());
@@ -407,7 +404,7 @@ public class JwtOkHttpDemo {
             System.out.println("   ПОЛЕЗНАЯ НАГРУЗКА ТОКЕНА (декодированная):\n" + tryPrettyPrintJsonElseRaw(payload, mapper));
 
             StringBuilder claimsStr = new StringBuilder("   ПРОВЕРЕННЫЕ УТВЕРЖДЕНИЯ (CLAIMS) из полезной нагрузки:\n");
-            claimsJws.getBody().forEach((k, v) -> claimsStr.append(String.format("       %s: %s\n", k, v)));
+            claimsJws.getPayload().forEach((k, v) -> claimsStr.append(String.format("       %s: %s\n", k, v)));
             System.out.println(claimsStr.toString());
 
         } catch (Exception e) { // Ошибка декодирования Base64 или другая
